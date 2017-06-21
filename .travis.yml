@@ -1,0 +1,12 @@
+sudo: false
+language: ruby
+cache: bundler
+rvm:
+ - jruby-9.1.9.0
+ - rbx-3.75
+ - 2.3.4
+ - 2.4.1
+ - 2.5.0-dev
+before_install: gem install bundler -v 1.15.1
+after_success:
+- bundle exec codeclimate-test-reporter
