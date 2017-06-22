@@ -20,3 +20,6 @@ RSpec.configure do |config|
     c.syntax = :expect
   end
 end
+
+require 'support/pet_store'
+require 'support/shared_examples'

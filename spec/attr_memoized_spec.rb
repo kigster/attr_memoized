@@ -5,81 +5,11 @@ RSpec.describe AttrMemoized do
     expect(AttrMemoized::VERSION).not_to be nil
   end
 
-  class Pet < Struct.new(:name)
-  end
-  class Dog < Pet
-  end
-  class Cat < Pet
-  end
-  class Turtle < Pet
-  end
-
-  class PetStore
-    include AttrMemoized
-
-    attr_memoized :turtles, -> { grow_turtles }
-
-    # A contrived example, here we have two values :cats and :dogs memoized
-    # to two separate calls to method :pet_creator.
-    #
-    # Because variables are initialized lazily, the order will depend on
-    # the usage.
-    attr_memoized :cats, :dogs, :pet_creator
-
-    attr_reader :turtle_counter, :pet_counter
-
-    TURTLE_NAMES = %i(Scary Horrible Monstrocity Bloodthirsty)
-
-    def initialize
-      @turtle_counter = 0
-      @pet_counter    = 0
-    end
-
-    def grow_turtles
-      @turtle_counter += 1
-      sleep 0.5 # turtles grow slow or something.
-      initializing(:grow_turtles)
-      TURTLE_NAMES.map { |name| Turtle.new(name) }
-    end
-
-    def pet_creator
-      sleep 0.1
-      @pet_counter += 1
-      initializing(:pet_creator)
-      @pet_counter.odd? ? Cat.new('tootsie') : Dog.new('sniffy')
-    end
-
-    def initializing(*)
-      puts 'I am never actually called'
-    end
-  end
-
   before { allow(store).to receive(:initializing) }
-
-  shared_examples_for :thread_safe_attribute \
-    do |attribute, actual_method,  result_evaluator,  expected_result_value|
-
-    it 'should correctly initialize each member once' do
-      expect(store).to receive(:initializing).with(actual_method).once
-
-      t1 = Thread.new { store.send(attribute) }
-      t2 = Thread.new { store.send(attribute) }
-
-      r1 = t1.value
-      r2 = t2.value
-
-      # they should literally be the same object
-      expect(r1).to eq(r2)
-      expect(r1.object_id).to eq(r2.object_id)
-
-      expect(store).not_to receive(actual_method)
-      expect(store.send(attribute)).to eq(r1)
-
-      expect(result_evaluator[r1]).to eq(expected_result_value) if result_evaluator
-    end
-  end
+  # Validate the gem using the PetStore example.
 
   subject(:store) { PetStore.new }
+
   describe :cats do
     it_should_behave_like :thread_safe_attribute,
                           :cats, # attribute
@@ -87,6 +17,7 @@ RSpec.describe AttrMemoized do
                           ->(result) { result.name },
                           'tootsie'
   end
+
   describe :dogs do
     before { store.cats }
     it_should_behave_like :thread_safe_attribute,
@@ -95,10 +26,39 @@ RSpec.describe AttrMemoized do
                           ->(result) { result.name },
                           'sniffy'
   end
-  describe :turtles do
-    before { store.cats; store.dogs }
+
+  describe 'variable assignment' do
+    before { store.instance_variable_set(:@turtles, nil) }
+
     it_should_behave_like :thread_safe_attribute,
                           :turtles, # attribute
                           :grow_turtles # actual method to loa value
+
+    context '#turtles' do
+      it 'should not be equal to the new turtles before assignment' do
+        expect(store.turtles).to_not be_nil
+      end
+
+      context '#turtles=' do
+        let(:new_turtles) { [PetStore::Turtle.new('Benji'), PetStore::Turtle.new('Franklin')] }
+        before { store.turtles }
+
+        it 'should properly assign the value' do
+          store.turtles = new_turtles
+          expect(store.turtles).to eq(new_turtles)
+        end
+      end
+
+    end
+
+    context '#sheep=' do
+      before do
+        expect(store.sheep.size).to eq(1)
+        expect(store.sheep.first.color).to eq(:black)
+      end
+      it 'should raise NameError when called' do
+        expect { store.sheep = nil }.to raise_error(NameError)
+      end
+    end
   end
 end
