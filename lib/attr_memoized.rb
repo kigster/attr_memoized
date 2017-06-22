@@ -91,18 +91,18 @@ module AttrMemoized
             block_or_proc = attributes.pop if [Proc, Method, Symbol].include?(attributes.last.class)
             attributes.each do |attribute|
               define_attribute_writer(attribute) unless opts && opts.has_key?(:writer) && opts[:writer].eql?(false)
-              define_attribute_reader(attribute, block_or_proc, **opts)
+              define_attribute_reader(attribute, block_or_proc)
             end
           end
 
-          def define_attribute_reader(attribute, block_or_proc, **opts)
+          def define_attribute_reader(attribute, block_or_proc)
             at_attribute = at(attribute)
             define_method(attribute) do |**opts|
               thread_safe_memoize(attribute, at_attribute, block_or_proc, **opts)
             end
           end
 
-          def define_attribute_writer(attribute, **opts)
+          def define_attribute_writer(attribute)
             at_attribute = at(attribute)
             define_method("#{attribute}=".to_sym) do |value|
               mutex.synchronize do
@@ -140,8 +140,8 @@ module AttrMemoized
   # @param [Proc | Method | Symbol] —  what to call to get the uncached value
   # @param [Hash] opts  —  if true, forces refetching of the value by calling
   #                        the block given.
-  def thread_safe_memoize(attribute, at_attribute, block_or_proc, **opts, &block)
-    refresh = opts && opts.has_key?(:refresh) ? opts[:refresh] : nil
+  def thread_safe_memoize(attribute, at_attribute, block_or_proc, **opts)
+    refresh = (opts && opts.has_key?(:refresh)) ? opts[:refresh] : nil
 
     # quickly return if we already have the value, and refresh was not
     # set to true
@@ -153,18 +153,20 @@ module AttrMemoized
     self.mutex.synchronize do
       # do second check, in case this was defined during a race condition
       var = self.instance_variable_get(at_attribute)
-      return var if var && !refresh
+      return var if (var && !refresh)
 
-      case block_or_proc
-        when Symbol
-          self.send(block_or_proc)
-        when Method
-          method.call
-        when Proc
-          instance_exec(&block_or_proc)
-        else
-          raise ArgumentError, "expecting either a method name, method, or a block for attribute #{attribute}, block_or_method type #{block_or_proc.class}"
-      end.tap do |v|
+      result = case block_or_proc
+                 when Symbol
+                   self.send(block_or_proc)
+                 when Method
+                   method.call
+                 when Proc
+                   instance_exec(&block_or_proc)
+                 else
+                   raise ArgumentError, "expecting either a method name, method, or a block for attribute #{attribute}, block_or_method type #{block_or_proc.class}"
+               end
+
+      result.tap do |v|
         self.instance_variable_set(at_attribute, v)
       end
     end
