@@ -5,9 +5,9 @@
 
 # AttrMemoized
 
-This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates an atttribute reader and writer methods that performed delayed initialization in a thread-safe way.
+This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates an attribute reader and writer methods that performed delayed initialization in a thread-safe way.
 
-The library expects that you treat the attributes, once you fetch them, **as read-only constants**. You can _re-assign_ an attribute after it's aleady been initialized, and such assignment will also be performed within a thread-safe lock. You can disable attribute writer generation by passing `writer: false` option to `attr_memoized` method.
+The library expects that you treat the attributes, once you fetch them, **as read-only constants**. You can _re-assign_ an attribute after it's already been initialized, and such assignment will also be performed within a thread-safe lock. You can disable attribute writer generation by passing `writer: false` option to `attr_memoized` method.
 
 The gems solves the race condition problem in lazy-initialization by creating thread-safe wrappers around (possibly) thread-unsafe operations.
 
@@ -79,7 +79,7 @@ end
     Thread.new { Account.owner } ].map(&:join)
 ```
 
-Ruby evalues `a||=b` as `a || a=b`, which means that the assignment above won't happen if `a` is "falsey", ie. `false` or `nil`. If the method `self.owner` is not synchronized, then both threads will execute the expensive query, and only the result of the query executed by the second thread will be saved in `@owner`, even though by that time it will already have a value assigned by the first thread, that by that time had already completed.
+Ruby evaluates `a||=b` as `a || a=b`, which means that the assignment above won't happen if `a` is "falsey", ie. `false` or `nil`. If the method `self.owner` is not synchronized, then both threads will execute the expensive query, and only the result of the query executed by the second thread will be saved in `@owner`, even though by that time it will already have a value assigned by the first thread, that by that time had already completed.
 
 Most memoization gems out there, among those that the author had reviewed, did not seem to be concerned with thread safety, which is actually OK under wide ranging situations, particularly if the objects are not meant to be shared across threads. 
 
