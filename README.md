@@ -93,21 +93,48 @@ methods:
    
   * Pre-initialized instance method `#mutex`. Each instance of the class gets it's own dedicated mutex.
 
-  * New class method `#attr_memoized` is added, with the following syntax:
-
   * Convenience method `#with_lock` is provided in place of `#mutex.synhronize` and should be used to wrap any state changes to the class in order to guard against concurrent modification by other threads. It will only use `mutex.synchronize` once per thread, to avoid self-deadlocking.
      
+  * New class method `#attr_memoized` is added, with the following syntax:
+
 ```ruby
 attr_memoized :attribute, [ :attribute, ...], -> { block returning a value } # Proc
 attr_memoized :attribute, [ :attribute, ...], :instance_method               # symbol
 attr_memoized :attribute, [ :attribute, ...], SomeClass.method(:method_name) # Method instance
 ```
 
-  * the block in the definition above is called via #instance_exec on the object and, therefore, has access to all private methods without the need for `self.` receiver. If the value is a symbol, it is expected to be a method name of an instance method that takes no arguments. It may also be an instance of a `Method`.
-     
-  * multiple attribute names are allowed in the `#attr_memoized`, and they will be lazy-loaded in the order of access and separately. Each will be initialized only when called, and therefore may get a different value as compared to other attributes in the same list.  If the block always returns the same value, then the list of attributes can be viewed as a name with aliases.
+  * In the above definitions: 
+    * If a `Proc` is provided as an initializer, it will be called via `#instance_exec` method on the instance and, therefore, can access any public or private method of the instance without the need for `self.` receiver. 
 
-Typically, however, you would use `#attr_memoized` with just one attribute at a time, unless you know what you are doing.
+    * If the initializer is a `Symbol`, it is expected to be an instance method name, of a method that takes no arguments.
+ 
+    * Finally, any `Method` instance can also be used.
+
+    * Note, that multiple attribute names can be passed to `#attr_memoized`, and they will be lazy-loaded in the order of access and independently of each other. If the block always returns the same exactly value, then the list may be viewed as aliases. But if the block returns a new value each time its called, then each attribute will be initialized with a different value, eg:
+
+```ruby
+srand
+require 'attr_memoized'
+class RandomNumberGenerator
+  include AttrMemoized
+  attr_memoized :random1,
+                :random2,
+                :random3, -> { rand(2**64) }
+end
+
+rng = RandomNumberGenerator.new
+# each is initialized as it's called, and so they 
+# are all different:
+rng.random1 #=> 1304594275874777789
+rng.random2 #=> 12671375021040220422
+rng.random3 #=> 16656281832060271071
+
+# second time, they are all already memoized:
+rng.random1 #=> 1304594275874777789
+rng.random2 #=> 12671375021040220422
+rng.random3 #=> 16656281832060271071
+```    
+
 
 ## Installation
 
