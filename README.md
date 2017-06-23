@@ -5,13 +5,15 @@
 
 # AttrMemoized
 
-This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates thread-safe reader and writer methods, particularly ensuring thread-safe delayed initialization.
+This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates an atttribute reader and writer methods that performed delayed initialization in a thread-safe way.
 
-The primary and recommended way to use this library is to use it like a thread-safe lazy loader which essentially _caches_ heavy **attributes** in a multi-threaded environment. Once the attribute is initialized and returned for the very first time,  any subsequent calls are returned instantly, without the expensive `#synchronize`. 
+The library expects that you treat the attributes, once you fetch them, **as read-only constants**. You can _re-assign_ an attribute after it's aleady been initialized, and such assignment will also be performed within a thread-safe lock. You can disable attribute writer generation by passing `writer: false` option to `attr_memoized` method.
 
-The library expects that you treat the attributes, once you fetch them, **as read-only constants**. However, you can _re-assign_ an attribute after it's aleady been initialized, and such assignment will be performed with proper synchronization. You can also, optionally, disable the attribute writer generation by passing `writer: false` option.
+The gems solves the race condition problem in lazy-initialization by creating thread-safe wrappers around (possibly) thread-unsafe operations.
 
-The gems solves race condition in lazy-initialization by creating thread-safe wrappers around (possibly) thread-unsafe operations.
+#### Caveat
+
+Note, that if the initialization returns a "falsey" result (ie, `false` or `nil`), then the attribute will attempt to be re-initialized every time its "reader" method is called. This is not a bug. We treat falsey value as uninitialized by design.
 
 ## Complete Example
 
