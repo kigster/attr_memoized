@@ -11,7 +11,12 @@ class PetStore
   end
 
   include AttrMemoized
+
+  # In this example, we have a dependency, so it's important
+  # the thread does not deadlock when instantiating both
   attr_memoized :turtles, -> { grow_turtles }
+  attr_memoized :lead_turtle, -> { turtles.first }
+
   attr_memoized :sheep, -> { Array[Struct.new(:color).new(:black)] }, writer: false
 
   # A contrived example, here we have two values :cats and :dogs memoized
@@ -42,6 +47,10 @@ class PetStore
     @pet_counter += 1
     initializing(:pet_creator)
     @pet_counter.odd? ? Cat.new('tootsie') : Dog.new('sniffy')
+  end
+
+  def load_lead_turtle
+    turtles.first
   end
 
   # marker method used in specs

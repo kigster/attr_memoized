@@ -5,132 +5,104 @@
 
 # AttrMemoized
 
-This is a simple, and yet rather useful **memoization** library, with a specific goal of being also **thread-safe.**
+This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates thread-safe reader and writer methods, particularly ensuring thread-safe delayed initialization.
 
-> NOTE: the most useful and recommended way to use this library is to memoize **read-only attributes** in a multi-threaded environment. The attribues should almost be constants: the type you initialize once, and ever again.  
+The primary and recommended way to use this library is to use it like a thread-safe lazy loader which essentially _caches_ heavy **attributes** in a multi-threaded environment. Once the attribute is initialized and returned for the very first time,  any subsequent calls are returned instantly, without the expensive `#synchronize`. 
 
-One of the biggest issues with memoization is that in multi-threaded environment memoization often lead to unexpected or undefined results, due to a situation known as a _race condition_.
+The library expects that you treat the attributes, once you fetch them, **as read-only constants**. However, you can _re-assign_ an attribute after it's aleady been initialized, and such assignment will be performed with proper synchronization. You can also, optionally, disable the attribute writer generation by passing `writer: false` option.
+
+The gems solves race condition in lazy-initialization by creating thread-safe wrappers around (possibly) thread-unsafe operations.
+
+## Complete Example
+
+Below we have a `Configuration` class that has several attributes that are all lazy loaded.
+
+```ruby
+require 'redis'
+require 'attr_memoized'
+# Save config to Redis
+r = Redis.new
+#=> #<Redis:0x007fbd8d3a4308>
+r.set('config_file', '{ "host": "127.0.0.1" }')
+#=> OK
+r.set('another_file', '{ "host": "google.com" }')
+#=> OK
+r.get('config_file') #=> { "host": "127.0.0.1" }
+
+module Concurrent
+  class RedisConfig
+    include AttrMemoized
+
+    attr_memoized :contents, -> { redis.get(redis_key) } 
+    attr_memoized :redis,  -> { Redis.new }   
+    attr_memoized :redis_key, -> { 'config_file' }
+  
+    def reload_config!(new_key)
+      with_lock do 
+        self.redis_key = new_key
+        contents(reload: true)
+      end
+    end
+  end
+end
+
+@config = Concurrent::RedisConfig.new
+@config.contents
+#=> { "host": "127.0.0.1" }
+@config.reload_config!('another_file')
+#=> { "host": "google.com" }
+@config.contents
+#=> { "host": "google.com" }
+```    
+
+
+### The Problem
+
+One of the issues with memoization in multi-threaded environment is that it may lead to unexpected or undefined behavior, due to the situation known as a _race condition_.
 
 Consider a simple example below:
 
 ```ruby
 class Account
-  def owner(id)
-    # Slow query, takes ~ 50 ms
-    @owner ||= ActiveRecord::Base.execute("select ... ", id: id) 
+  def self.owner
+    # Slow expensive query
+    @owner ||= ActiveRecord::Base.execute('select ...')
   end
 end
+# Let's be dangerous:
+[   Thread.new { Account.owner }, 
+    Thread.new { Account.owner } ].map(&:join)
 ```
 
-This can be a problem. 
+As a reminder — Ruby evalues `a||=b` as `a || a=b`, which means that the assignment won't happen if `a` is falsey, ie. `false` or `nil`. In this example, if the `#owner` is not synchronized, both threads will execute the expensive query, and only the result of the query executed by the second thread will be saved in `@owner`, even though by that time it will already have a value assigned by the first thread that finished earlier.
 
-Ruby evalues `a||=b` as `a || a=b`, which means that the assignment won't happen if `a` is falsey, ie. `false` or `nil`. If two theads, happen to access this method nearly at nearly the same time, both threads will determine that `@owner` is nil, and then both will execute an expensive operation. First assignment is immediately overwritten by the assignment in the second thread. If the operation is idempotent (ie, does not change state when run multiple times) this ultimately may be OK, but if not, then we have a real problem.
+Most memoization gems out there that the author reviewed, did not seem to concern themselves witn thread safety, which may be OK under wide ranging situations, particularly if the objects are not shared across threads. 
 
-Most memoization gems out there do not concern themselves witn thread safety, which may be OK under some situations. In others, where multiple threads are used, in particularly over a period of time, then it might be nice to have a convenient wrapper optimized for performance, and avoiding additional calls after the first call returns...
+But in multi-threaded applications it's important to protect initializers of expensive resources, which is exactly what this library attempts to accomplish.
 
-The gems solves this by creating a thread-safe wrappers around possibly thread-unsafe methods.  Here is the most basic example:
-
-```ruby
-require 'aws-sdk'
-require 'attr_memoized'
-# eg: a hypothetical wrapper around AWS Kinesis API:
-class AwsKinesisWrapper
-  include AttrMemoized
-  attr_memoized :client, -> { create_client }, writer: false 
-  attr_memoized :stream, -> { client.describe_stream(stream_name: 'lotus') }
-  def create_client
-    Aws::Kinesis::Client.new(region: 'us-west-2')
-  end
-end
-```
-
-Note, that by default `attr_memoized` will create both `#attribute` and `#attribute=(value)` methods that are thread safe. While the writer is not something we expect to be used often, the thinkning was, might as well provide a thread-safe attribute setter just in case it is used. But the primary use-case for using this library is **lazy-initialization in a thread-safe way**.
 
 ## Usage
 
 Gem's primary module, when included, decorates the receiver with several useful
 methods:
 
-  * Both class and any object instance receives the `#mutex` methods, that can be used to guard any shared resources. Each class gets their own class mutex, and each instance gets it's own separate mutex, separate from the class's mutex:
-
-```ruby
-# eg:
-class ThreadSafe
-  include AttrMemoized
-  
-  mutex.synchronize do 
-    # imporant class operation
-  end
-  
-  def download(file)
-    mutex.synchronize do
-      @file ||= file
-    end
-    
-    mutex == self.class.mutex # => false
-  end
-end
-
-```    
-     
   * New class method `#attr_memoized` is added, with the following syntax:
 
 ```ruby
 attr_memoized :attribute_name, ..., -> { block returning a value }
 ```
 
-  * the block in the definition above is called via #instance_exec on the
-    object (instance of a class) and has, therefore, access to all private
-    methods. If the value is a symbol, it is expected to be a method name, 
-    of an instance method with no arguments.
+  * Convenience method `#with_lock` should be used to wrap any state change to the class to guard against modification by other threads. It will only use `mutex.synchronize` once per thread, thus avoiding a common source of deadlocks.
      
-  * multiple attribute names are allowed in the `#attr_memoized`, and they
-    will be assigned the result of the block whenever lazy-loaded.
+  * Class level `#mutex` method, as well as instance. Each class gets their own mutex, as well each instance. 
 
-Typically, however, you would use `#attr_memoized` with just one attribute at
-a time, unless you want to have several version of the same variable (which 
-is shown in the following example, albeit a contrived one).
+  * the block in the definition above is called via #instance_exec on the object (instance of a class) and has, therefore, access to all private methods. If the value is a symbol, it is expected to be a method name, of an instance method with no arguments.
      
-
-```ruby
-require 'attr_memoized'
-
-class RandomNumbers
-  include AttrMemoized
-  # this uses a Proc syntax, which is eva
-  attr_memoized :number1, :number2, -> { small_random_number }
-  attr_memoized :big, :generate_big_number
-  
-  def generate_big_number
-    rand(2**64)
-  end
-  
-  def small_random_number
-    rand(2**10)
-  end
-end
-
-@rn = RandomNumbers.new
-@rn.instance_variable_get(:@number1) # => nil
-@rn.instance_variable_get(:@number2) # => nil
-
-Thread.new do 
-  @rn.number1                          # => 461
-  # and it's memoized now:
-  @rn.number1                          # => 461
-end
-
-Thread.new do 
-  @rn.number2                          # => 556
-end
-
-@rn.number1 			# => 461
-@rn.number2 			# => 556
-@rn.big       		# => 10569575038899804255
-```
+  * multiple attribute names are allowed in the `#attr_memoized`, and they will be assigned the result of the block whenever lazy-loaded.
 
 
-
+Typically, however, you would use `#attr_memoized` with just one attribute at a time, unless you want to have several version of the same variable.
+     
 ## Installation
 
 Add this line to your application's Gemfile:

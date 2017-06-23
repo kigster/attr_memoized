@@ -1,5 +1,5 @@
 require 'attr_memoized/version'
-
+require 'thread'
 # This module, when included, decorates the receiver with several useful
 # methods:
 #
@@ -83,7 +83,7 @@ module AttrMemoized
           #
           # Class level method that for each attribute in the list
           # creates thread-safe memoized accessor, that expects only
-          # options has as argument (refresh: true | false), but provides
+          # options has as argument (reload: true | false), but provides
           # a block for initially setting the value
           #
           def attr_memoized(*attributes, **opts)
@@ -98,16 +98,16 @@ module AttrMemoized
           def define_attribute_reader(attribute, block_or_proc)
             at_attribute = at(attribute)
             define_method(attribute) do |**opts|
-              thread_safe_memoize(attribute, at_attribute, block_or_proc, **opts)
+              read_memoize(attribute, at_attribute, block_or_proc, **opts)
             end
           end
 
           def define_attribute_writer(attribute)
             at_attribute = at(attribute)
             define_method("#{attribute}=".to_sym) do |value|
-              mutex.synchronize do
-                self.instance_variable_set(at_attribute, value)
-              end
+              block = -> { self.instance_variable_set(at_attribute, value) }
+              already_locked? ? block[] : with_thread_local_lock { mutex.synchronize(&block) }
+              value
             end
           end
 
@@ -134,41 +134,64 @@ module AttrMemoized
     end
   end
 
+  def with_lock(&block)
+    already_locked? ? block[] : with_thread_local_lock { mutex.synchronize(&block) }
+  end
+
+  private
+
   #
   # @param [Symbol] attribute —  name of the attribute
   # @param [Symbol] @attribute —  symbol representing instance variable
   # @param [Proc | Method | Symbol] —  what to call to get the uncached value
   # @param [Hash] opts  —  if true, forces refetching of the value by calling
   #                        the block given.
-  def thread_safe_memoize(attribute, at_attribute, block_or_proc, **opts)
-    refresh = (opts && opts.has_key?(:refresh)) ? opts[:refresh] : nil
-
-    # quickly return if we already have the value, and refresh was not
-    # set to true
+  def read_memoize(attribute, at_attribute, block_or_proc, **opts)
     var = self.instance_variable_get(at_attribute)
-    return var if refresh.nil? && var
+    return var if var && !reload?(opts)
+    with_lock { assign_value(attribute, at_attribute, block_or_proc, **opts) }
+    self.instance_variable_get(at_attribute)
+  end
 
-    # this is the part that can get gobbled up if multiple threads are
-    # calling it, so wrap it in mutex.
-    self.mutex.synchronize do
-      # do second check, in case this was defined during a race condition
-      var = self.instance_variable_get(at_attribute)
-      return var if (var && !refresh)
+  def assign_value(attribute, at_attribute, block_or_proc, **opts)
+    # refetch the value of +var+ because we are now inside a synchronize block
+    var = self.instance_variable_get(at_attribute)
+    return var if (var && !reload?(opts))
 
-      result = case block_or_proc
-                 when Symbol
-                   self.send(block_or_proc)
-                 when Method
-                   method.call
-                 when Proc
-                   instance_exec(&block_or_proc)
-                 else
-                   raise ArgumentError, "expecting either a method name, method, or a block for attribute #{attribute}, block_or_method type #{block_or_proc.class}"
-               end
+    # now call whatever `was defined on +attr_memoized+ to get the actual value
+    result = case block_or_proc
+               when Symbol
+                 send(block_or_proc)
+               when Method
+                 method.call
+               when Proc
+                 instance_exec(&block_or_proc)
+               else
+                 raise ArgumentError, "expecting either a method name, method, or a block for attribute #{attribute}, block_or_method type #{block_or_proc.class}"
+             end
 
-      result.tap do |v|
-        self.instance_variable_set(at_attribute, v)
-      end
+    result.tap do |v|
+      self.instance_variable_set(at_attribute, v)
     end
   end
+
+  def reload?(opts)
+    (opts && opts.has_key?(:reload)) ? opts[:reload] : nil
+  end
+
+  # just a key into Thread.local
+  def object_locked_key
+    @key ||= "this.#{object_id}".to_sym
+  end
+
+  def already_locked?
+    Thread.current[object_locked_key]
+  end
+
+  def with_thread_local_lock
+    Thread.current[object_locked_key] = true
+    yield if block_given?
+    Thread.current[object_locked_key] = nil
+  end
+
 end

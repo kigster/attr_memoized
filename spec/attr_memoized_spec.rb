@@ -12,27 +12,48 @@ RSpec.describe AttrMemoized do
 
   describe :cats do
     it_should_behave_like :thread_safe_attribute,
-                          :cats, # attribute
-                          :pet_creator, # actual method to load value
-                          ->(result) { result.name },
-                          'tootsie'
+                          attribute:          :cats,
+                          load_method:        :pet_creator,
+                          result_transformer: ->(result) { result.name },
+                          expected_value:     'tootsie'
   end
 
   describe :dogs do
     before { store.cats }
     it_should_behave_like :thread_safe_attribute,
-                          :dogs, # attribute
-                          :pet_creator, # actual method to load value
-                          ->(result) { result.name },
-                          'sniffy'
+                          attribute:          :dogs,
+                          load_method:        :pet_creator,
+                          result_transformer: ->(result) { result.name },
+                          expected_value:     'sniffy'
+  end
+
+  describe :turtles do
+    before { store.turtles }
+    it_should_behave_like :thread_safe_attribute,
+                          attribute:          :turtles,
+                          load_method:        :grow_turtles,
+                          result_transformer: ->(result) { result.size },
+                          expected_value:     4
+  end
+
+  describe :lead_turtle do
+    before { store.turtles }
+    it_should_behave_like :thread_safe_attribute,
+                          attribute:          :lead_turtle,
+                          load_method:        :load_lead_turtle,
+                          result_transformer: ->(result) { result.name },
+                          expected_value:     PetStore::TURTLE_NAMES.first,
+                          ignore_reload:      true
+
   end
 
   describe 'variable assignment' do
     before { store.instance_variable_set(:@turtles, nil) }
 
     it_should_behave_like :thread_safe_attribute,
-                          :turtles, # attribute
-                          :grow_turtles # actual method to loa value
+                          attribute:   :turtles,
+                          load_method: :grow_turtles
+
 
     context '#turtles' do
       it 'should not be equal to the new turtles before assignment' do
