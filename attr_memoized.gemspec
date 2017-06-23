@@ -9,8 +9,8 @@ Gem::Specification.new do |spec|
   spec.authors       = ['Konstantin Gredeskoul']
   spec.email         = ['kig@reinvent.one']
 
-  spec.summary       = %q{This gem adds #attr_memoized class method that ensures the block that executes once to get the initial value is executed truly only once, and is thread safe.}
-  spec.description   = %q{This gem adds #attr_memoized class method that ensures the block that executes once to get the initial value is executed truly only once, and is thread safe.}
+  spec.summary       = %q{Memoize attributes in a thread-safe way. This ruby gem adds a `#attr_memoized` class method, that provides a lazy-loading mechanism for initializing "heavy" attributes, but in a thread-safe way. Instances thus created can be shared among threads.}
+  spec.description   = %q{Memoize attributes in a thread-safe way. This ruby gem adds a `#attr_memoized` class method, that provides a lazy-loading mechanism for initializing "heavy" attributes, but in a thread-safe way. Instances thus created can be shared among threads.}
   spec.homepage      = 'https://github.com/kigster/attr_memoized'
   spec.license       = 'MIT'
 
