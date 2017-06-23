@@ -19,7 +19,6 @@ Below we have a `Configuration` class that has several attributes that are all l
 
 ```ruby
 require 'redis'
-require 'attr_memoized'
 # Save config to Redis
 r = Redis.new
 #=> #<Redis:0x007fbd8d3a4308>
@@ -29,15 +28,20 @@ r.set('another_file', '{ "host": "google.com" }')
 #=> OK
 r.get('config_file') #=> { "host": "127.0.0.1" }
 
+require 'attr_memoized'
 module Concurrent
   class RedisConfig
     include AttrMemoized
-
+    # Now there is an instance and a class methods +#mutex+ are defined.
+    # We also have an instance method +with_lock+, and a class method 
+    # +attr_memoized+
     attr_memoized :contents, -> { redis.get(redis_key) } 
     attr_memoized :redis,  -> { Redis.new }   
     attr_memoized :redis_key, -> { 'config_file' }
   
     def reload_config!(new_key)
+      # +with_lock+ method if offered in place of +synchronize+
+      # to avoid double-locking within the same thread.
       with_lock do 
         self.redis_key = new_key
         contents(reload: true)
@@ -55,18 +59,17 @@ end
 #=> { "host": "google.com" }
 ```    
 
-
 ### The Problem
 
-One of the issues with memoization in multi-threaded environment is that it may lead to unexpected or undefined behavior, due to the situation known as a _race condition_.
+One of the issues with memoization in multi-threaded environment is that it may lead to unexpected or undefined behavior, due to the situation known as a [_race condition_](https://stackoverflow.com/questions/34510/what-is-a-race-condition).
 
-Consider a simple example below:
+Consider the following example:
 
 ```ruby
 class Account
   def self.owner
     # Slow expensive query
-    @owner ||= ActiveRecord::Base.execute('select ...')
+    @owner ||= ActiveRecord::Base.execute('select ...').first
   end
 end
 # Let's be dangerous:
@@ -74,9 +77,9 @@ end
     Thread.new { Account.owner } ].map(&:join)
 ```
 
-As a reminder — Ruby evalues `a||=b` as `a || a=b`, which means that the assignment won't happen if `a` is falsey, ie. `false` or `nil`. In this example, if the `#owner` is not synchronized, both threads will execute the expensive query, and only the result of the query executed by the second thread will be saved in `@owner`, even though by that time it will already have a value assigned by the first thread that finished earlier.
+Ruby evalues `a||=b` as `a || a=b`, which means that the assignment above won't happen if `a` is "falsey", ie. `false` or `nil`. If the method `self.owner` is not synchronized, then both threads will execute the expensive query, and only the result of the query executed by the second thread will be saved in `@owner`, even though by that time it will already have a value assigned by the first thread, that by that time had already completed.
 
-Most memoization gems out there that the author reviewed, did not seem to concern themselves witn thread safety, which may be OK under wide ranging situations, particularly if the objects are not shared across threads. 
+Most memoization gems out there, among those that the author had reviewed, did not seem to be concerned with thread safety, which is actually OK under wide ranging situations, particularly if the objects are not meant to be shared across threads. 
 
 But in multi-threaded applications it's important to protect initializers of expensive resources, which is exactly what this library attempts to accomplish.
 
@@ -86,23 +89,26 @@ But in multi-threaded applications it's important to protect initializers of exp
 Gem's primary module, when included, decorates the receiver with several useful
 methods:
 
+  * Pre-initialized class method `#mutex`. Each class that includes `AttrMemoized` gets their own mutex.
+   
+  * Pre-initialized instance method `#mutex`. Each instance of the class gets it's own dedicated mutex.
+
   * New class method `#attr_memoized` is added, with the following syntax:
 
+  * Convenience method `#with_lock` is provided in place of `#mutex.synhronize` and should be used to wrap any state changes to the class in order to guard against concurrent modification by other threads. It will only use `mutex.synchronize` once per thread, to avoid self-deadlocking.
+     
 ```ruby
-attr_memoized :attribute_name, ..., -> { block returning a value }
+attr_memoized :attribute, [ :attribute, ...], -> { block returning a value } # Proc
+attr_memoized :attribute, [ :attribute, ...], :instance_method               # symbol
+attr_memoized :attribute, [ :attribute, ...], SomeClass.method(:method_name) # Method instance
 ```
 
-  * Convenience method `#with_lock` should be used to wrap any state change to the class to guard against modification by other threads. It will only use `mutex.synchronize` once per thread, thus avoiding a common source of deadlocks.
+  * the block in the definition above is called via #instance_exec on the object and, therefore, has access to all private methods without the need for `self.` receiver. If the value is a symbol, it is expected to be a method name of an instance method that takes no arguments. It may also be an instance of a `Method`.
      
-  * Class level `#mutex` method, as well as instance. Each class gets their own mutex, as well each instance. 
+  * multiple attribute names are allowed in the `#attr_memoized`, and they will be lazy-loaded in the order of access and separately. Each will be initialized only when called, and therefore may get a different value as compared to other attributes in the same list.  If the block always returns the same value, then the list of attributes can be viewed as a name with aliases.
 
-  * the block in the definition above is called via #instance_exec on the object (instance of a class) and has, therefore, access to all private methods. If the value is a symbol, it is expected to be a method name, of an instance method with no arguments.
-     
-  * multiple attribute names are allowed in the `#attr_memoized`, and they will be assigned the result of the block whenever lazy-loaded.
+Typically, however, you would use `#attr_memoized` with just one attribute at a time, unless you know what you are doing.
 
-
-Typically, however, you would use `#attr_memoized` with just one attribute at a time, unless you want to have several version of the same variable.
-     
 ## Installation
 
 Add this line to your application's Gemfile:

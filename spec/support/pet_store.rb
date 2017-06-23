@@ -17,7 +17,11 @@ class PetStore
   attr_memoized :turtles, -> { grow_turtles }
   attr_memoized :lead_turtle, -> { turtles.first }
 
-  attr_memoized :sheep, -> { Array[Struct.new(:color).new(:black)] }, writer: false
+  def self.breed_sheep
+    Array[Struct.new(:color).new(:black)]
+  end
+
+  attr_memoized :sheep, method(:breed_sheep), writer: false
 
   # A contrived example, here we have two values :cats and :dogs memoized
   # to two separate calls to method :pet_creator.
