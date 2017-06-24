@@ -5,13 +5,11 @@
 
 # AttrMemoized
 
-This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates attribute reader and attribute writer methods. The reader performs a lazy-initialization of each variable in a thread-safe. The writer performs an assignment in a thread-safe way.
+This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates attribute reader and attribute writer methods. The reader performs a thread-safe lazy-initialization of each attribute. The writer performs a thread-safe assignment. You can disable writer method generation by passing `writer: false` option to `attr_memoized` method.
 
 Any `attr_memoized` attribute may depend on any number of regular attributes or other `attr_memoized` attributes.
 
-You can disable writer method generation by passing `writer: false` option to `attr_memoized` method.
-
-This gems provides a shorthand syntax of defining lazy-initialized variables as one-liners, while additionally providing thrfead-safety guarantees around lazy-initilization or assignment.
+This gems provides a shorthand syntax for defining lazy-initialized variables as "one-liners", while additionally providing thread-safety guarantees around lazy-initilization of attributes, or attribute assignments.
 
 #### Caveat
 
