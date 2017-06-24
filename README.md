@@ -5,15 +5,17 @@
 
 # AttrMemoized
 
-This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates an attribute reader and writer methods that performed delayed initialization in a thread-safe way.
+This is a simple, and yet rather useful **memoization** library, with a specific goal of being **thread-safe** during lazy-loading of attributes. Class method `attr_memoized` automatically generates attribute reader and attribute writer methods. The reader performs a lazy-initialization of each variable in a thread-safe. The writer performs an assignment in a thread-safe way.
 
-The library expects that you treat the attributes, once you fetch them, **as read-only constants**. You can _re-assign_ an attribute after it's already been initialized, and such assignment will also be performed within a thread-safe lock. You can disable attribute writer generation by passing `writer: false` option to `attr_memoized` method.
+Any `attr_memoized` attribute may depend on any number of regular attributes or other `attr_memoized` attributes.
 
-The gems solves the race condition problem in lazy-initialization by creating thread-safe wrappers around (possibly) thread-unsafe operations.
+You can disable writer method generation by passing `writer: false` option to `attr_memoized` method.
+
+This gems provides a shorthand syntax of defining lazy-initialized variables as one-liners, while additionally providing thrfead-safety guarantees around lazy-initilization or assignment.
 
 #### Caveat
 
-Note, that if the initialization returns a "falsey" result (ie, `false` or `nil`), then the attribute will attempt to be re-initialized every time its "reader" method is called. This is not a bug. We treat falsey value as uninitialized by design.
+Note, that if the initialization or assignment returns a "falsey" result (ie, `false` or `nil`), then the attribute will attempt to be re-initialized every time its "reader" method is called. This is not a bug. We treat falsey value as uninitialized by design.
 
 ## Complete Example
 
@@ -88,7 +90,7 @@ But in multi-threaded applications it's important to protect initializers of exp
 
 ## Usage
 
-Gem's primary module, when included, decorates the receiver with several useful
+`AttrMemoized` — the gem's primary module, when included, decorates the receiver with several useful
 methods:
 
   * Pre-initialized class method `#mutex`. Each class that includes `AttrMemoized` gets their own mutex.
