@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
 RSpec.describe AttrMemoized do
@@ -44,7 +46,6 @@ RSpec.describe AttrMemoized do
                           result_transformer: ->(result) { result.name },
                           expected_value:     PetStore::TURTLE_NAMES.first,
                           ignore_reload:      true
-
   end
 
   describe 'variable assignment' do
@@ -53,7 +54,6 @@ RSpec.describe AttrMemoized do
     it_should_behave_like :thread_safe_attribute,
                           attribute:   :turtles,
                           load_method: :grow_turtles
-
 
     context '#turtles' do
       it 'should not be equal to the new turtles before assignment' do
@@ -69,7 +69,6 @@ RSpec.describe AttrMemoized do
           expect(store.turtles).to eq(new_turtles)
         end
       end
-
     end
 
     context '#sheep=' do
@@ -77,6 +76,7 @@ RSpec.describe AttrMemoized do
         expect(store.sheep.size).to eq(1)
         expect(store.sheep.first.color).to eq(:black)
       end
+
       it 'should raise NameError when called' do
         expect { store.sheep = nil }.to raise_error(NameError)
       end

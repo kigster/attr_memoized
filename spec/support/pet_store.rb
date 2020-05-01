@@ -1,6 +1,7 @@
+# frozen_string_literal: true
+
 require 'attr_memoized'
 class PetStore
-
   class Pet < Struct.new(:name)
   end
   class Dog < Pet
@@ -15,13 +16,13 @@ class PetStore
   # In this example, we have a dependency, so it's important
   # the thread does not deadlock when instantiating both
   attr_memoized :turtles, -> { grow_turtles }
-  attr_memoized :lead_turtle, -> { turtles.first }
+  attr_memoized_reader :lead_turtle, -> { turtles.first }
 
-  def self.breed_sheep
+  def self.breed_sheep(**_opts)
     Array[Struct.new(:color).new(:black)]
   end
 
-  attr_memoized :sheep, method(:breed_sheep), writer: false
+  attr_memoized_reader :sheep, method(:breed_sheep)
 
   # A contrived example, here we have two values :cats and :dogs memoized
   # to two separate calls to method :pet_creator.
@@ -32,7 +33,7 @@ class PetStore
 
   attr_reader :turtle_counter, :pet_counter
 
-  TURTLE_NAMES = %i(Scary Horrible Monstrosity Bloodthirsty)
+  TURTLE_NAMES = %i(Scary Horrible Monstrosity Bloodthirsty).freeze
 
   def initialize
     @turtle_counter = 0
@@ -46,7 +47,7 @@ class PetStore
     TURTLE_NAMES.map { |name| Turtle.new(name) }
   end
 
-  def pet_creator
+  def pet_creator(**opts)
     sleep 0.1
     @pet_counter += 1
     initializing(:pet_creator)

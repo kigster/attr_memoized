@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'spec_helper'
 
 def define_in_two_threads(attribute)
@@ -7,20 +9,18 @@ def define_in_two_threads(attribute)
   r1 = t1.value
   r2 = t2.value
 
-  return r1, r2
+  [r1, r2]
 end
 
 # Define #store in the outer context.
 
-RSpec.shared_examples_for :thread_safe_attribute do \
-  | \
-  attribute:,
+RSpec.shared_examples_for :thread_safe_attribute do |attribute:,
   load_method:,
   result_transformer: nil,
   expected_value: nil,
   ignore_reload: false|
 
-  it 'should correctly initialize each member once' do
+  it 'should correctly initialize each member, but only once' do
     allow(store).to receive(:initializing).with(load_method)
 
     r1, r2 = define_in_two_threads(attribute)
@@ -38,10 +38,5 @@ RSpec.shared_examples_for :thread_safe_attribute do \
 
     expect(store.send(attribute)).to eq(r1)
     expect(store.send(attribute).object_id).to eq(r1.object_id)
-    expect(store.send(attribute, reload: true).object_id).not_to eq(r1.object_id) \
-      unless ignore_reload
   end
-
-
-
 end

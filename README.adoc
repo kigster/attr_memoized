@@ -8,16 +8,20 @@ image:https://codeclimate.com/github/kigster/attr_memoized/badges/issue_count.sv
 
 = AttrMemoized
 
-This is a simple, and yet rather useful *memoization* library, with a specific goal of being *thread-safe* during lazy-loading of attributes. Class method `attr_memoized` automatically generates attribute reader and attribute writer methods. The reader performs a thread-safe lazy-initialization of each attribute. The writer performs a thread-safe assignment. You can disable writer method generation by passing `writer: false` option to `attr_memoized` method.
+This is a simple, and yet powerful *memoization* library, with a specific goal of being *thread-safe* during lazy-loading of expensive to create
+attributes.
+Class method
+`attr_memoized` automatically generates attribute reader and attribute writer methods. The reader performs a thread-safe lazy-initialization of
+each attribute. The writer performs a thread-safe assignment. You can disable writer method generation by using `attr_memoized_reader` class
+method instead of the `attr_memoized`.
 
-Any `attr_memoized` attribute may depend on any number of regular attributes or other `attr_memoized` attributes.
-
-This gems provides a shorthand syntax for defining lazy-initialized variables as "one-liners", while additionally providing thread-safety guarantees around lazy-initilization of attributes, or attribute assignments.
+This gems provides a shorthand syntax for defining lazy-initialized variables as "one-liners", while additionally providing thread-safety
+guarantees around lazy-initialization of attributes, or attribute assignments.
 
 [discrete]
-==== Caveat
-
-Note, that if the initialization or assignment returns a "falsey" result (ie, `false` or `nil`), then the attribute will attempt to be re-initialized every time its "reader" method is called. This is not a bug. We treat falsey value as uninitialized by design.
+WARNING: **Caveat**:
+If the initialization or assignment returns a "falsey" result (ie, `false` or `nil`), then the attribute will attempt to be re-initialized every
+time its "reader" method is called. This is not a bug. We treat falsey value as uninitialized by design.
 
 == Complete Example
 
@@ -26,29 +30,27 @@ Below we have a `Configuration` class that has several attributes that are all l
 [source,ruby]
 ----
 require 'redis'
-# Save config to Redis
-r = Redis.new
-#=> #<Redis:0x007fbd8d3a4308>
-r.set('config_file', '{ "host": "127.0.0.1" }')
-#=> OK
-r.set('another_file', '{ "host": "google.com" }')
-#=> OK
-r.get('config_file') #=> { "host": "127.0.0.1" }
-
 require 'attr_memoized'
+
 module Concurrent
   class RedisConfig
-    include AttrMemoized
-    # Now there is an instance and a class methods +#mutex+ are defined.
-    # We also have an instance method +with_lock+, and a class method
-    # +attr_memoized+
-    attr_memoized :contents, -> { redis.get(redis_key) }
-    attr_memoized :redis,  -> { Redis.new }
-    attr_memoized :redis_key, -> { 'config_file' }
 
+    include AttrMemoized
+
+    CONTENT_KEY = 'site-content'.freeze
+
+    # This imports instance method #with_lock+, and class methods
+    # #attr_memoized, and #attr_memoized_reader.
+
+    attr_memoized_reader :redis_key,    -> { CONTENT_KEY }
+    attr_memoized_reader :redis_config, -> { { host: 'localhost', port: 6379 } }
+    attr_memoized_reader :redis,        -> { Redis.new(redis_config) }
+    attr_memoized_reader :contents,     -> { redis.get(redis_key) }
+
+
+    # #with_lock method if offered in place of the #synchronize
+    # to avoid double-locking within the same thread.
     def reload_config!(new_key)
-      # +with_lock+ method if offered in place of +synchronize+
-      # to avoid double-locking within the same thread.
       with_lock do
         self.redis_key = new_key
         contents(reload: true)
@@ -99,38 +101,58 @@ But in multi-threaded applications it's important to protect initializers of exp
 `AttrMemoized` -- the gem's primary module, when included, decorates the receiver with several useful
 methods:
 
-* Pre-initialized class method `#mutex`. Each class that includes `AttrMemoized` gets their own mutex.
-* Pre-initialized instance method `#mutex`. Each instance of the class gets it's own dedicated mutex.
-* Convenience method `#with_lock` is provided in place of `#mutex.synhronize` and should be used to wrap any state changes to the class in order to guard against concurrent modification by other threads. It will only use `mutex.synchronize` once per thread, to avoid self-deadlocking.
+* Pre-initialized class method `#attr_memoized_mutex`. Each class that includes `AttrMemoized` gets their own mutex.
+
+* Pre-initialized instance method `#attr_memoized_mutex`. Each instance of the class gets it's own dedicated mutex.
+
+* Convenience method `#with_lock` is provided in place of `#attr_memoized_mutex.synchronize` and should be used to wrap any state changes to the class in order to guard against concurrent modification by other threads. It will only use `mutex.synchronize` once per thread, to avoid self-deadlocking.
+
 * New class method `#attr_memoized` is added, with the following syntax:
 
 [source,ruby]
 ----
-attr_memoized :attribute, [ :attribute, ...], -> { block returning a value } # Proc
-attr_memoized :attribute, [ :attribute, ...], :instance_method               # symbol
-attr_memoized :attribute, [ :attribute, ...], SomeClass.method(:method_name) # Method instance
+attr_memoized :attr, [ :aliases, ], -> { block returning a value }     # A proc
+attr_memoized :attr, [ :aliases, ], :instance_method, arg1: value, ... # A symbol
+attr_memoized :attr, [ :aliases, ], SomeClass.method(:method_name)     # A method
 ----
 
 * In the above definitions:
  ** If a `Proc` is provided as an initializer, it will be called via `#instance_exec` method on the instance and, therefore, can access any public or private method of the instance without the need for `self.` receiver.
- ** If the initializer is a `Symbol`, it is expected to be an instance method name, of a method that takes no arguments.
+
+ ** If the initializer is a `Symbol`, it is expected to be an instance method name, of a method that accepts keyword arguments - in other words the methods should always have `**opts` as the last argument, even if you are not using them.
+ +
+ *** The reason for this is that you can supply arguments to methods when defining lazy initializations, for instance — take a look at the definition of `pi25` in the provided example `NumericHelper` below.
+
  ** Finally, any `Method` instance can also be used.
+
  ** Note, that multiple attribute names can be passed to `#attr_memoized`, and they will be lazy-loaded in the order of access and independently of each other. If the block always returns the same exactly value, then the list may be viewed as aliases. But if the block returns a new value each time its called, then each attribute will be initialized with a different value, eg:
 
 [source,ruby]
 ----
-srand
+Kernel.srand # init random numbers
 require 'attr_memoized'
-class RandomNumberGenerator
+require 'bigdecimal/math'
+
+class NumericHelper
   include AttrMemoized
   attr_memoized :random1,
                 :random2,
                 :random3, -> { rand(2**64) }
-  attr_memoized :random,  -> { rand(10) }, writer: false
-  attr_memoized :seed,    -> { Time.now.to_i % 57 }
+
+  attr_memoized :pi, :π  # call a class method when accessed
+
+  # Returns PI as a string with digits.
+  def self.π(digits: 25)
+    precision = digits
+    result = BigMath.PI(precision)
+    result = result.truncate(precision).to_s
+    result = result[2..-1]                # Remove '0.'
+    result = result.split('e').first      # Remove 'e1'
+    result.insert(1, '.')
+  end
 end
 
-rng = RandomNumberGenerator.new
+rng = NumericHelper.new
 # each is initialized as it's called, and so they
 # are all different:
 rng.random1 #=> 1304594275874777789
@@ -141,6 +163,8 @@ rng.random3 #=> 16656281832060271071
 rng.random1 #=> 1304594275874777789
 rng.random2 #=> 12671375021040220422
 rng.random3 #=> 16656281832060271071
+
+rng.pi      #=>
 ----
 
 == Installation

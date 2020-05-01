@@ -1,14 +1,12 @@
 # frozen_string_literal: true
 
 require 'attr_memoized/version'
-require 'thread'
-
 # This module, when included, decorates the receiver with several useful
 # methods:
 #
 # * Both class and instance methods #mutex are added, that can be used
-#   to guard any shared resources. Each class gets their own class mutex,
-#   and each instance gets it's own separate mutex.
+#   to guard any shared resources. Each class gets their own class attr_memoized_mutex.
+#   and each instance gets it's own separate attr_memoized_mutex.
 #
 # * new class method #attr_memoized is added, the syntax is as follows:
 #
@@ -64,7 +62,7 @@ require 'thread'
 #
 module AttrMemoized
   # We are being a bit paranoid here, so yes we are creating
-  # a central lock used to initialize other class-specific mutexes.
+  # a central lock used to initialize other class-specific attr_memoized_mutex.s.
   # This should only be a problem if you are constantly defining new
   # classes that include +AttrMemoized++
   LOCK = Mutex.new.freeze unless defined?(LOCK)
@@ -79,6 +77,7 @@ module AttrMemoized
           @attr_memoized_mutex ||= Mutex.new
         end
 
+        # noinspection ALL
         class << self
           attr_reader :attr_memoized_mutex
 
@@ -99,64 +98,77 @@ module AttrMemoized
           #   LazyConnection.new.database_connection
           #   #=> <ActiveRecord::Connection::PgSQL::Driver:0xff23234f....>
           #
+          # @param [Symbol] name of the attribute
+          # @param [Symbol] another name of the attribute, etc...
+          # @param [Proc,Symbol,Method] callable — something to call for lazy initialization
+          # @param [Hash] options — you can define arguments here to be passed to a method or proc
           def attr_memoized(*attributes, **opts)
-            attributes    = Array[*attributes]
-            block_or_proc = attributes.pop if SUPPORTED_INIT_TYPES.include?(attributes.last.class)
-            attributes.each do |attribute|
-              __define_attribute_writer(attribute) unless opts && opts.has_key?(:writer) && opts[:writer].eql?(false)
-              __define_attribute_reader(attribute, block_or_proc)
+            attributes = Array[*attributes]
+            callable   = attributes.pop
+            unless SUPPORTED_INIT_TYPES.include?(callable.class)
+              raise ArgumentError, "Invalid argument #{callable} to attr_memoized. Expecting one of: #{SUPPORTED_INIT_TYPES.map(&:to_s)}"
             end
+
+            writer = opts.delete(:writer)
+            attributes.each do |attribute|
+              __define_attribute_writer(attribute, **opts) unless writer == false
+              __define_attribute_reader(attribute, callable, **opts)
+            end
+          end
+
+          # Memoized Reader only
+          def attr_memoized_reader(*attrs, **opts)
+            attr_memoized(*attrs, writer: false, **opts)
           end
 
           private
 
-          def __define_attribute_reader(attribute, block_or_proc)
+          def __define_attribute_reader(attribute, callable, **opts)
             at_attribute = __at_var(attribute)
-            define_method(attribute) do |**opts|
-              __read_memoize(attribute, at_attribute, block_or_proc, **opts)
+            define_method(attribute) do |*|
+              __read_memoize(attribute, at_attribute, callable, **opts)
             end
           end
 
-          def __define_attribute_writer(attribute)
+          def __define_attribute_writer(attribute, **_opts)
             at_attribute = __at_var(attribute)
             define_method("#{attribute}=".to_sym) do |value|
-              with_lock { self.instance_variable_set(at_attribute, value) }
+              with_lock { instance_variable_set(at_attribute, value) }
               value
             end
           end
 
           # Convert an attribute name into an @variable syntax
           def __at_var(attr)
-            attr        = attr.to_sym unless attr.is_a?(Symbol)
+            attr = attr.to_sym unless attr.is_a?(Symbol)
             @attr_cache ||= {}
             @attr_cache[attr] || (@attr_cache[attr] = "@#{attr}".to_sym)
           end
         end
 
-        # instance method: uses the class mutex to create an instance
-        # mutex, and then uses the instance mutex to wrap instance's
-        # state
-        def mutex
-          return @mutex if @mutex
+        # instance method: uses the class +attr_memoized_mutex+ to create an instance
+        # attr_memoized_mutex and then uses the instance attr_memoized_mutex to wrap instance's state
+        # @return [Mutex] mutex
+        def attr_memoized_mutex
+          return @attr_memoized_mutex if @attr_memoized_mutex
+
           self.class.attr_memoized_mutex.synchronize {
-            @mutex ||= Mutex.new
+            @attr_memoized_mutex ||= Mutex.new
           }
         end
       end
     end
   end
 
-  # This public method is offered in place of a local +mutex+'s
-  # synchronize method to guard state changes to the object using
-  # object's mutex and a thread-local flag. The flag prevents
-  # duplicate synchronize within the same thread on the same +mutex+.
+  # This method offers "thread-local locking": meaning that the synchronize
+  # block is never called twice from the same thread, thus avoiding deadlocks.
   #
   # @param [Proc] block block to wrap in a synchronize unless we are already under one
   def with_lock(&block)
     if __locked?
       block.call
     else
-      __with_thread_local_lock { mutex.synchronize(&block) }
+      __with_thread_local_lock { attr_memoized_mutex.synchronize(&block) }
     end
   end
 
@@ -167,40 +179,41 @@ module AttrMemoized
   #
   # @param [Symbol] attribute - name of the attribute
   # @param [Symbol] at_attribute - symbol representing attribute instance variable
-  # @param [Proc, Method, Symbol] block_or_proc - what to call to get the uncached value
+  # @param [Proc, Method, Symbol] callable - what to call to get the uncached value
   # @param [Hash] opts - additional options
   # @option opts [Boolean] :reload - forces re-initialization of the memoized attribute
-  def __read_memoize(attribute, at_attribute, block_or_proc, **opts)
-    var = self.instance_variable_get(at_attribute)
+  def __read_memoize(attribute, at_attribute, callable, **opts)
+    var = instance_variable_get(at_attribute)
     return var if var && !__reload?(opts)
-    with_lock { __assign_value(attribute, at_attribute, block_or_proc, **opts) }
-    self.instance_variable_get(at_attribute)
+
+    with_lock { __assign_value(attribute, at_attribute, callable, **opts) }
+    instance_variable_get(at_attribute)
   end
 
   # This private method resolves the initializer argument and returns it's result.
-  def __assign_value(attribute, at_attribute, block_or_proc, **opts)
+  def __assign_value(attribute, at_attribute, callable, **opts)
     # reload the value of +var+ because we are now inside a synchronize block
-    var = self.instance_variable_get(at_attribute)
-    return var if (var && !__reload?(opts))
+    var = instance_variable_get(at_attribute)
+    return var if var && !__reload?(opts)
 
     # now call whatever `was defined on +attr_memoized+ to get the actual value
-    case block_or_proc
+    case callable
     when Symbol
-      send(block_or_proc)
+      send(callable, **opts)
     when Method
-      block_or_proc.call
+      callable.call(**opts)
     when Proc
-      instance_exec(&block_or_proc)
+      instance_exec(&callable)
     else
-      raise ArgumentError, "expected one of #{AttrMemoized::SUPPORTED_INIT_TYPES.map(&:to_s).join(', ')} for attribute #{attribute}, got #{block_or_proc.class}"
+      raise ArgumentError, "expected one of #{AttrMemoized::SUPPORTED_INIT_TYPES.map(&:to_s).join(', ')} for attribute #{attribute}, got #{callable.class}"
     end.tap do |result|
-      self.instance_variable_set(at_attribute, result)
+      instance_variable_set(at_attribute, result)
     end
   end
 
   # Returns +true+ if +opts+ contains reload: +true+
   def __reload?(opts)
-    (opts && opts.has_key?(:reload)) ? opts[:reload] : nil
+    opts.delete(:reload)
   end
 
   # just a key into Thread.local
@@ -214,6 +227,7 @@ module AttrMemoized
 
   def __with_thread_local_lock
     raise ArgumentError, 'Already locked!' if __locked?
+
     Thread.current[__object_lock_key] = true
     yield if block_given?
     Thread.current[__object_lock_key] = nil
