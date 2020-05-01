@@ -2,8 +2,7 @@
 
 require 'attr_memoized'
 class PetStore
-  class Pet < Struct.new(:name)
-  end
+  Pet = Struct.new(:name)
   class Dog < Pet
   end
   class Cat < Pet
@@ -15,10 +14,10 @@ class PetStore
 
   # In this example, we have a dependency, so it's important
   # the thread does not deadlock when instantiating both
-  attr_memoized :turtles, -> { grow_turtles }
-  attr_memoized_reader :lead_turtle, -> { turtles.first }
+  attr_memoized         :turtles,     -> { grow_turtles }
+  attr_memoized_reader  :lead_turtle, -> { turtles.first }
 
-  def self.breed_sheep(**_opts)
+  def self.breed_sheep(**)
     Array[Struct.new(:color).new(:black)]
   end
 
@@ -47,7 +46,7 @@ class PetStore
     TURTLE_NAMES.map { |name| Turtle.new(name) }
   end
 
-  def pet_creator(**opts)
+  def pet_creator(**)
     sleep 0.1
     @pet_counter += 1
     initializing(:pet_creator)
